@@ -12,6 +12,7 @@ const multer = require("multer");
 const fs = require('fs');
 const { v4: uuidv4 } = require("uuid");
 const uploadFolder = './uploads';
+const friendRoutes = require('./Routes/friendRoutes');
 
 // تأكد ان مجلد uploads موجود
 if (!fs.existsSync(uploadFolder)) {
@@ -28,7 +29,16 @@ const io = new Server(server, {
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: [
+        "https://cyphers1.netlify.app", // frontend production
+        "http://localhost:5000"         // frontend local testing
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "../client")));
@@ -45,6 +55,16 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+
+// 1Attach io to req so your friendRoutes can do `req.io.to(...)`
+ app.use((req, _res, next) => {
+   req.io = io;
+   next();
+ });
+
+ // Mount all friend endpoints at /api
+ app.use('/api', friendRoutes);
 
 // التعامل مع رفع الملفات
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -117,6 +137,8 @@ io.on("connection", (socket) => {
             socket.to(roomId).emit("message", msg);
         });
     });
+
+
 
     // Join room handler (advanced version)
     socket.on('joinRoom', async ({ username, room }, callback) => {
@@ -256,6 +278,31 @@ io.on("connection", (socket) => {
     socket.on('disconnect', () => {
         console.log("User disconnected:", socket.id);
     });
+
+    socket.on('getFriendsData', async ({ username }, callback) => {
+    try {
+            const user = await User.findOne({ username });
+
+            if (!user) return callback({ success: false, error: 'User not found' });
+
+            // Get full friend data
+        const friendsData = await User.find({ username: { $in: user.friends } })
+            .select('username status avatar');
+
+            const requests = user.friendRequests || [];
+
+            callback({
+                success: true,
+            friends: friendsData,
+                requests: requests.map(r => ({ from: r }))  // simple map for frontend
+            });
+
+        } catch (err) {
+            console.error('getFriendsData error:', err);
+            callback({ success: false, error: 'Server error' });
+        }
+    });
+
 
     // Helper function to update user count
     function updateUserCount(room) {
